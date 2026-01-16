@@ -1,0 +1,67 @@
+<html>
+<style>
+html, body {
+    height: 100vh;
+    margin: 0;
+    overflow: hidden;
+}
+body {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    grid-template-rows: repeat(4, calc(25vw * 9 / 16));
+    gap: 0;
+    position: relative;
+    width: 100vw;
+    height: calc(100vw * 9 / 16);
+    max-height: 100vh;
+    margin: 0 auto;
+    overflow: hidden;
+}
+@media (max-aspect-ratio: 16/9) {
+    body {
+        height: 100vh;
+        width: calc(100vh * 16 / 9);
+        grid-template-columns: repeat(4, calc(25vh * 16 / 9));
+        grid-template-rows: repeat(4, 25vh);
+    }
+}
+img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    transition: opacity 0.5s ease;
+}
+img.active{grid-column:span 2;grid-row:span 2}
+img.event-label {
+    position: relative;
+}
+img.event-label::after {
+    content: attr(data-event-type);
+    position: absolute;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    background: rgba(0, 0, 0, 0.7);
+    padding: 8px;
+    font-family: monospace;
+    font-size: 14px;
+    font-weight: bold;
+    text-align: center;
+    text-transform: uppercase;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    color: yellow;
+    pointer-events: none;
+}
+img.event-label.high::after {
+    color: red;
+}
+</style>
+<body>
+<script src="utils.js"></script>
+<script src="algorithm.js"></script>
+<script src="eventsource.js"></script>
+<script src="init.js"></script>
+</body>
+</html>
