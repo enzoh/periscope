@@ -61,6 +61,9 @@ function isVideoSource(camNum){
 function ensureElementType(element,camNum){
     const isVideo=isVideoSource(camNum);
     const currentTag=element.tagName.toLowerCase();
+    const originalClassName=element.className||'';
+    const originalEventType=element.dataset.eventType||'';
+    const originalCamera=element.dataset.camera||'';
     
     if(isVideo&&currentTag!=='video'){
         const video=document.createElement('video');
@@ -73,11 +76,13 @@ function ensureElementType(element,camNum){
                 video.setAttribute(attr.name,attr.value);
             }
         });
-        if(element.dataset.camera)video.dataset.camera=element.dataset.camera;
-        if(element.dataset.eventType)video.dataset.eventType=element.dataset.eventType;
-        video.className=element.className;
+        if(originalCamera)video.dataset.camera=originalCamera;
+        if(originalEventType)video.dataset.eventType=originalEventType;
+        if(originalClassName)video.className=originalClassName;
         video.style.cssText=element.style.cssText;
-        element.parentNode.replaceChild(video,element);
+        if(element.parentNode){
+            element.parentNode.replaceChild(video,element);
+        }
         return video;
     }else if(!isVideo&&currentTag!=='img'){
         const img=document.createElement('img');
@@ -86,11 +91,13 @@ function ensureElementType(element,camNum){
                 img.setAttribute(attr.name,attr.value);
             }
         });
-        if(element.dataset.camera)img.dataset.camera=element.dataset.camera;
-        if(element.dataset.eventType)img.dataset.eventType=element.dataset.eventType;
-        img.className=element.className;
+        if(originalCamera)img.dataset.camera=originalCamera;
+        if(originalEventType)img.dataset.eventType=originalEventType;
+        if(originalClassName)img.className=originalClassName;
         img.style.cssText=element.style.cssText;
-        element.parentNode.replaceChild(img,element);
+        if(element.parentNode){
+            element.parentNode.replaceChild(img,element);
+        }
         return img;
     }
     return element;
@@ -144,10 +151,25 @@ function setImageSource(element,camNum){
         element.dataset.camera=camNum;
     }
     
+    const originalClassName=element.className||'';
+    const originalEventType=element.dataset.eventType||'';
+    
     element=ensureElementType(element,camNum);
+    
+    if(!element.dataset.camera){
+        element.dataset.camera=camNum;
+    }
+    
+    if(originalClassName){
+        element.className=originalClassName;
+    }
+    if(originalEventType){
+        element.dataset.eventType=originalEventType;
+    }
+    
     const targetSrc=getCameraSource(camNum);
     
-    if(element.src===targetSrc)return;
+    if(element.src===targetSrc)return element;
     
     const baseCacheKey=camNum;
     const retryCacheKey=camNum+'_retry';
@@ -157,7 +179,7 @@ function setImageSource(element,camNum){
                 setImageSource(element,camNum);
             }
         }).catch(()=>{});
-        return;
+        return element;
     }
     
     element.onerror=()=>{
@@ -178,6 +200,8 @@ function setImageSource(element,camNum){
     }).catch(()=>{
         handleError(element,camNum);
     });
+    
+    return element;
 }
 
 function handleError(element,camNum,retryCount=0){

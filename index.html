@@ -32,11 +32,12 @@ img {
     transition: opacity 0.5s ease;
 }
 img.active{grid-column:span 2;grid-row:span 2}
-img.event-label {
+.event-wrapper {
     position: relative;
+    width: 100%;
+    height: 100%;
 }
-img.event-label::after {
-    content: attr(data-event-type);
+.event-label {
     position: absolute;
     bottom: 0;
     left: 0;
@@ -53,8 +54,9 @@ img.event-label::after {
     text-overflow: ellipsis;
     color: yellow;
     pointer-events: none;
+    z-index: 1;
 }
-img.event-label.high::after {
+.event-label.high {
     color: red;
 }
 </style>

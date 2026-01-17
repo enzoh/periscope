@@ -93,7 +93,15 @@ function onCameraDeactivate(camNum){
 function updateDisplay(){
     if(updateDisplayTimeout)clearTimeout(updateDisplayTimeout);
     updateDisplayTimeout=setTimeout(()=>{
-        const imgs=Array.from(document.querySelectorAll('body>img'));
+        const imgs=[];
+        document.querySelectorAll('body>img,body>.event-wrapper>img').forEach(el=>{
+            imgs.push(el.parentElement.classList.contains('event-wrapper')?el.parentElement:el);
+        });
+        while(imgs.length<16){
+            const img=document.createElement('img');
+            document.body.appendChild(img);
+            imgs.push(img);
+        }
         const activeShown=getActiveShown();
         const recentShown=getRecentShown();
         
@@ -129,16 +137,43 @@ function updateDisplay(){
                 if(!found)break;
             }
             
-            const img=imgs[imgIndex];
-            img.dataset.camera=camNum;
+            let img=imgs[imgIndex];
             const eventType=activeEventTypes.get(camNum)||'unknown';
             const priority=priorityMap.get(`${camNum}-${eventType}`)||'low';
-            img.className=`active event-label ${priority}`;
-            img.dataset.eventType=eventType;
-            img.style.gridColumn=`${col} / span 2`;
-            img.style.gridRow=`${row} / span 2`;
-            img.style.display='';
-            setImageSource(img,camNum);
+            
+            let wrapper=img.parentElement;
+            if(!wrapper||!wrapper.classList.contains('event-wrapper')){
+                wrapper=document.createElement('div');
+                wrapper.className='event-wrapper';
+                wrapper.style.gridColumn=img.style.gridColumn;
+                wrapper.style.gridRow=img.style.gridRow;
+                wrapper.style.display=img.style.display;
+                img.style.gridColumn='';
+                img.style.gridRow='';
+                img.style.display='';
+                img.parentNode.replaceChild(wrapper,img);
+                wrapper.appendChild(img);
+            }
+            
+            img.dataset.camera=camNum;
+            img.className='active';
+            wrapper.style.gridColumn=`${col} / span 2`;
+            wrapper.style.gridRow=`${row} / span 2`;
+            wrapper.style.display='';
+            
+            let label=wrapper.querySelector('.event-label');
+            if(!label){
+                label=document.createElement('span');
+                label.className='event-label';
+                wrapper.appendChild(label);
+            }
+            label.className=`event-label ${priority}`;
+            label.textContent=eventType;
+            
+            const elementAfterSet=setImageSource(img,camNum);
+            if(elementAfterSet&&elementAfterSet.parentElement!==wrapper){
+                wrapper.replaceChild(elementAfterSet,img);
+            }
             
             const cell1=(row-1)*4+col;
             const cell2=(row-1)*4+col+1;
@@ -165,7 +200,12 @@ function updateDisplay(){
                 if(!occupied.has(cellId)){
                     const camNum=recentShown[recentIndex];
                     if(camNum){
-                        const img=imgs[imgIndex];
+                        let img=imgs[imgIndex];
+                        let wrapper=img.parentElement;
+                        if(wrapper&&wrapper.classList.contains('event-wrapper')){
+                            wrapper.parentNode.replaceChild(img,wrapper);
+                            wrapper.remove();
+                        }
                         img.dataset.camera=camNum;
                         img.className='';
                         img.dataset.eventType='';
@@ -186,7 +226,12 @@ function updateDisplay(){
                     if(!occupied.has(cellId)){
                         const camNum=recentShown[recentIndex];
                         if(camNum){
-                            const img=imgs[imgIndex];
+                            let img=imgs[imgIndex];
+                            let wrapper=img.parentElement;
+                            if(wrapper&&wrapper.classList.contains('event-wrapper')){
+                                wrapper.parentNode.replaceChild(img,wrapper);
+                                wrapper.remove();
+                            }
                             img.dataset.camera=camNum;
                             img.className='';
                             img.dataset.eventType='';
