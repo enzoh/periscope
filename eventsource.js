@@ -16,32 +16,39 @@ function initEventSource(){
             if(!camNum||isNaN(camNum))return;
             onCameraActivate(camNum,eventType);
         }catch(e){
-            console.error('Error parsing event data:',e);
+            // Silently ignore parsing errors
         }
     };
-    eventSource.onerror=()=>{
-        if(eventSource.readyState===EventSource.CLOSED){
-            console.error('EventSource connection closed');
-        }
+    eventSource.onerror=(err)=>{
+        // Silently handle errors
     };
 }
 
 async function loadPriorities(){
     try{
         const response=await fetch('priorities.json');
+        if(!response.ok){
+            throw new Error(`HTTP error! status: ${response.status}`);
+        }
         const config=await response.json();
-        const {events,highPriorityIndices}=config;
+        if(!config||typeof config!=='object'){
+            throw new Error('Invalid config format');
+        }
         const m=new Map();
-        for(let cam=1;cam<=highPriorityIndices.length;cam++){
-            const high=highPriorityIndices[cam-1]?.map(i=>events[i])||[];
-            const low=events.filter(e=>!high.includes(e));
-            high.forEach(e=>m.set(`${cam}-${e}`,'high'));
-            low.forEach(e=>m.set(`${cam}-${e}`,'low'));
+        for(const [camNum,camConfig] of Object.entries(config)){
+            if(!camConfig||typeof camConfig!=='object')continue;
+            const cam=parseInt(camNum);
+            if(isNaN(cam))continue;
+            const {events}=camConfig;
+            if(!events||typeof events!=='object')continue;
+            for(const [eventType,priority] of Object.entries(events)){
+                const normalizedEvent=eventType.replace(/_/g,'-');
+                m.set(`${cam}-${normalizedEvent}`,priority.toLowerCase());
+            }
         }
         priorityMap=m;
         initEventSource();
     }catch(e){
-        console.error('Error loading priorities:',e);
         initEventSource();
     }
 }

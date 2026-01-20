@@ -1,61 +1,70 @@
+const originalError = console.error;
+const originalWarn = console.warn;
+
+console.error = function(...args) {
+    const msg = args.join(' ');
+    if (msg.includes('502') || msg.includes('Bad Gateway') || msg.includes('/video')) {
+        return;
+    }
+    originalError.apply(console, args);
+};
+
+console.warn = function(...args) {
+    const msg = args.join(' ');
+    if (msg.includes('502') || msg.includes('Bad Gateway') || msg.includes('/video')) {
+        return;
+    }
+    originalWarn.apply(console, args);
+};
+
+window.addEventListener('error', function(e) {
+    if (e.target && (e.target.tagName === 'IMG' || e.target.tagName === 'VIDEO')) {
+        e.preventDefault();
+        e.stopPropagation();
+        return true;
+    }
+}, true);
+
 const cameraSources=new Map();
 const loadingByCamera=new Map();
 const loadedElements=new Map();
-const retryTimeouts=new Map();
 
-// This function sets live video feed URLs for all 26 cameras based on periscope/index.html (lines 33-161)
-// To use live feeds instead of static images, call this function (e.g., setLiveFeedSources())
-// and replace getCameraSource() calls or modify getCameraSource() to use cameraSources.get(camNum)
+const workingCameras = Array.from({length:26}, (_, i) => i + 1);
+
 function setLiveFeedSources(){
-    // Port 8000: cameras 13, 11, 12, 9
-    cameraSources.set(13,'http://127.0.0.1:8000/video13');
-    cameraSources.set(11,'http://127.0.0.1:8000/video11');
-    cameraSources.set(12,'http://127.0.0.1:8000/video12');
-    cameraSources.set(9,'http://127.0.0.1:8000/video9');
-    
-    // Port 8001: cameras 10, 8, 7, 4
-    cameraSources.set(10,'http://127.0.0.1:8001/video10');
-    cameraSources.set(8,'http://127.0.0.1:8001/video8');
-    cameraSources.set(7,'http://127.0.0.1:8001/video7');
-    cameraSources.set(4,'http://127.0.0.1:8001/video4');
-    
-    // Port 8002: cameras 2, 3, 1, 5
-    cameraSources.set(2,'http://127.0.0.1:8002/video2');
-    cameraSources.set(3,'http://127.0.0.1:8002/video3');
-    cameraSources.set(1,'http://127.0.0.1:8002/video1');
-    cameraSources.set(5,'http://127.0.0.1:8002/video5');
-    
-    // Port 8003: cameras 6, 14, 15, 16
-    cameraSources.set(6,'http://127.0.0.1:8003/video6');
-    cameraSources.set(14,'http://127.0.0.1:8003/video14');
-    cameraSources.set(15,'http://127.0.0.1:8003/video15');
-    cameraSources.set(16,'http://127.0.0.1:8003/video16');
-    
-    // Port 8004: cameras 17, 18, 19, 20
-    cameraSources.set(17,'http://127.0.0.1:8004/video17');
-    cameraSources.set(18,'http://127.0.0.1:8004/video18');
-    cameraSources.set(19,'http://127.0.0.1:8004/video19');
-    cameraSources.set(20,'http://127.0.0.1:8004/video20');
-    
-    // Port 8005: cameras 21, 22, 23, 24, 25, 26
-    cameraSources.set(21,'http://127.0.0.1:8005/video21');
-    cameraSources.set(22,'http://127.0.0.1:8005/video22');
-    cameraSources.set(23,'http://127.0.0.1:8005/video23');
-    cameraSources.set(24,'http://127.0.0.1:8005/video24');
-    cameraSources.set(25,'http://127.0.0.1:8005/video25');
-    cameraSources.set(26,'http://127.0.0.1:8005/video26');
+    for(let cam of workingCameras){
+        let port = 8001;
+        if([13, 11, 12, 9].includes(cam)) port = 8000;
+        else if([10, 8, 7, 4].includes(cam)) port = 8001;
+        else if([2, 3, 1, 5].includes(cam)) port = 8002;
+        else if([6, 14, 15, 16].includes(cam)) port = 8003;
+        else if([17, 18, 19, 20].includes(cam)) port = 8004;
+        else if([21, 22, 23, 24, 25, 26].includes(cam)) port = 8005;
+        cameraSources.set(cam, `http://127.0.0.1:${port}/video${cam}`);
+    }
 }
 
 function getCameraSource(camNum,useCacheBust=false){
-    const base=cameraSources.get(camNum)||`Images/${camNum}.png`;
-    if(useCacheBust){
+    const base=cameraSources.get(camNum);
+    
+    if(!base){
+        return 'data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7';
+    }
+    
+    const isVideoStream = base.startsWith('http://127.0.0.1:') && base.includes('/video');
+    if(useCacheBust && !isVideoStream){
         return base+'?t='+Date.now();
     }
     return base;
 }
 
 function isVideoSource(camNum){
-    return cameraSources.has(camNum);
+    const src = cameraSources.get(camNum);
+    if (!src) return false;
+    
+    // MJPEG streams (multipart/x-mixed-replace) should use <img>, not <video>
+    // Check if it's a video file extension (actual video codecs)
+    return src.match(/\.(mp4|webm|ogg|mov)$/i) !== null;
 }
 
 function ensureElementType(element,camNum){
@@ -134,12 +143,19 @@ function preloadCamera(camNum,useCacheBust=false){
             };
         }
         
-        element.onerror=()=>{
+        element.onerror=(e)=>{
+            if(e) e.preventDefault();
             loadingByCamera.delete(cacheKey);
             reject(new Error(`Failed to load ${src}`));
         };
         
         element.src=src;
+        if(isVideo){
+            element.load();
+            element.play().catch(err=>{
+                console.error(`Camera ${camNum} video playback failed:`, err);
+            });
+        }
         loadingByCamera.set(cacheKey,promise);
     });
     
@@ -182,14 +198,18 @@ function setImageSource(element,camNum){
         return element;
     }
     
-    element.onerror=()=>{
-        handleError(element,camNum);
+    element.onerror=(e)=>{
+        if(e) e.preventDefault();
+        return true;
     };
     
     if(element.tagName.toLowerCase()==='video'){
         element.oncanplay=null;
         element.src=targetSrc;
         element.load();
+        element.play().catch(err=>{
+            console.error(`Camera ${camNum} video playback failed:`, err);
+        });
     }else{
         element.onload=null;
         element.src=targetSrc;
@@ -197,37 +217,9 @@ function setImageSource(element,camNum){
     
     preloadCamera(camNum).then(()=>{
         loadedElements.set(camNum,element);
-    }).catch(()=>{
-        handleError(element,camNum);
-    });
+    }).catch(()=>{});
     
     return element;
-}
-
-function handleError(element,camNum,retryCount=0){
-    const currentCamNum=element.dataset.camera?parseInt(element.dataset.camera):camNum;
-    if(retryCount>=3)return;
-    
-    if(retryTimeouts.has(currentCamNum)){
-        clearTimeout(retryTimeouts.get(currentCamNum));
-    }
-    
-    const timeoutId=setTimeout(()=>{
-        retryTimeouts.delete(currentCamNum);
-        if(!element.parentNode||element.dataset.camera!=currentCamNum.toString())return;
-        
-        loadedElements.delete(currentCamNum);
-        
-        preloadCamera(currentCamNum,true).then(()=>{
-            if(element.parentNode&&element.dataset.camera==currentCamNum.toString()){
-                setImageSource(element,currentCamNum);
-            }
-        }).catch(()=>{
-            handleError(element,currentCamNum,retryCount+1);
-        });
-    },1000*(retryCount+1));
-    
-    retryTimeouts.set(currentCamNum,timeoutId);
 }
 
 function preloadImage(camNum){

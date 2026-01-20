@@ -10,9 +10,22 @@ function getRecentShown(){
     const activeCount=active.length;
     let countToShow=16;
     if(activeCount===1)countToShow=12;
-    else if(activeCount===3)countToShow=8;
+    else if(activeCount===2)countToShow=8;
+    else if(activeCount===3)countToShow=4;
     else if(activeCount>=4)countToShow=0;
-    return recent.filter(c=>!active.includes(c)).slice(0,countToShow);
+    
+    // Filter out active cameras from recent
+    const recentNonActive=recent.filter(c=>!active.includes(c));
+    
+    // If we don't have enough cameras, supplement with missing non-active cameras
+    if(recentNonActive.length<countToShow){
+        const allCameras=Array.from({length:26},(_,i)=>i+1);
+        const nonActive=allCameras.filter(c=>!active.includes(c)&&!recent.includes(c));
+        // Add missing cameras at the end (they're less recent)
+        recentNonActive.push(...nonActive);
+    }
+    
+    return recentNonActive.slice(0,countToShow);
 }
 
 function getActiveShown(){
@@ -32,6 +45,13 @@ function onCameraActivate(camNum,eventType){
     }
     const timeoutId=setTimeout(()=>onCameraDeactivate(camNum),10000);
     activeQueue.set(camNum,timeoutId);
+    
+    // Ensure recent contains all non-active cameras (should be automatic, but double-check)
+    const allCameras=Array.from({length:26},(_,i)=>i+1);
+    const nonActive=allCameras.filter(c=>!active.includes(c));
+    const missing=nonActive.filter(c=>!recent.includes(c));
+    // Add missing cameras at the end (they're the least recent)
+    recent.push(...missing);
     
     updateDisplay();
     console.log('Recent:',recent.slice(),'Recent_Shown:',getRecentShown(),'Active:',active.slice(),'Active_Shown:',getActiveShown(),'Previous_Replacement:',previousReplacement);
@@ -84,6 +104,13 @@ function onCameraDeactivate(camNum){
             }
         }
     }
+    
+    // Ensure recent contains all non-active cameras
+    const allCameras=Array.from({length:26},(_,i)=>i+1);
+    const nonActive=allCameras.filter(c=>!active.includes(c));
+    const missing=nonActive.filter(c=>!recent.includes(c));
+    // Add missing cameras at the end (they're the least recent)
+    recent.push(...missing);
     
     previousReplacement=camNum;
     updateDisplay();

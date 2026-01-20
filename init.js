@@ -7,7 +7,8 @@ function createBackgroundGrid(){
 
 function initialize(){
     createBackgroundGrid();
-    recent.push(...Array.from({length:26},(_,i)=>26-i));
+    setLiveFeedSources();
+    recent.push(...Array.from({length:26},(_,i)=>i+1));
     previousReplacement=null;
     for(let cam=1;cam<=26;cam++){
         preloadImage(cam).catch(()=>{});
