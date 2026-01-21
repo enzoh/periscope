@@ -28,8 +28,12 @@ window.addEventListener('error', function(e) {
 const cameraSources=new Map();
 const loadingByCamera=new Map();
 const loadedElements=new Map();
+const cameraRetryCounts=new Map();
+const cameraFailureStatus=new Map(); // tracks if camera has failed many times
 
 const workingCameras = Array.from({length:26}, (_, i) => i + 1);
+const MAX_RETRY_ATTEMPTS = 3; // 3 retries for real cameras (network hiccups are common)
+const RETRY_DELAY_BASE = 2000; // 2 seconds base delay for network recovery
 
 function setLiveFeedSources(){
     for(let cam of workingCameras){
@@ -132,6 +136,10 @@ function preloadCamera(camNum,useCacheBust=false){
             element.oncanplay=()=>{
                 loadingByCamera.delete(cacheKey);
                 loadedElements.set(camNum,element);
+                // Reset retry count and failure status on successful load
+                cameraRetryCounts.delete(camNum);
+                cameraFailureStatus.delete(camNum);
+                hideCameraError(camNum);
                 resolve(element);
             };
         }else{
@@ -139,6 +147,10 @@ function preloadCamera(camNum,useCacheBust=false){
             element.onload=()=>{
                 loadingByCamera.delete(cacheKey);
                 loadedElements.set(camNum,element);
+                // Reset retry count and failure status on successful load
+                cameraRetryCounts.delete(camNum);
+                cameraFailureStatus.delete(camNum);
+                hideCameraError(camNum);
                 resolve(element);
             };
         }
@@ -146,6 +158,17 @@ function preloadCamera(camNum,useCacheBust=false){
         element.onerror=(e)=>{
             if(e) e.preventDefault();
             loadingByCamera.delete(cacheKey);
+            
+            // Track retry count
+            const retryCount = cameraRetryCounts.get(camNum) || 0;
+            cameraRetryCounts.set(camNum, retryCount + 1);
+            
+            // If too many failures, mark as failed
+            if(retryCount + 1 >= MAX_RETRY_ATTEMPTS) {
+                cameraFailureStatus.set(camNum, true);
+                showCameraError(camNum);
+            }
+            
             reject(new Error(`Failed to load ${src}`));
         };
         
@@ -183,6 +206,20 @@ function setImageSource(element,camNum){
         element.dataset.eventType=originalEventType;
     }
     
+    // If camera is already marked as failed, show error but still try to load
+    // This allows recovery if the camera comes back online
+    if(cameraFailureStatus.get(camNum)) {
+        // Small delay to ensure element is in DOM and wrapper is set up
+        setTimeout(() => {
+            if(element.parentNode && element.dataset.camera == camNum.toString()) {
+                showCameraError(element);
+            }
+        }, 100);
+        // Still attempt to load - cameras can recover
+        // Reset retry count to give it a fresh chance
+        cameraRetryCounts.delete(camNum);
+    }
+    
     const targetSrc=getCameraSource(camNum);
     
     if(element.src===targetSrc)return element;
@@ -198,17 +235,176 @@ function setImageSource(element,camNum){
         return element;
     }
     
+    // Add a timeout to detect if image never loads (stuck loading)
+    let loadTimeout = null;
+    let timeoutFired = false;
+    loadTimeout = setTimeout(() => {
+        // If image hasn't loaded or errored after 8 seconds, consider it failed
+        if(!element.complete && !cameraFailureStatus.get(camNum)) {
+            timeoutFired = true;
+            const retryCount = cameraRetryCounts.get(camNum) || 0;
+            cameraRetryCounts.set(camNum, retryCount + 1);
+            
+            if(retryCount + 1 >= MAX_RETRY_ATTEMPTS) {
+                cameraFailureStatus.set(camNum, true);
+                showCameraError(element);
+            } else {
+                // Retry after timeout
+                const delay = RETRY_DELAY_BASE * Math.pow(2, retryCount);
+                setTimeout(() => {
+                    if(element.parentNode && element.dataset.camera == camNum.toString()) {
+                        if(!cameraFailureStatus.get(camNum)) {
+                            const retrySrc = getCameraSource(camNum, true);
+                            element.src = retrySrc;
+                        }
+                    }
+                }, delay);
+            }
+        }
+    }, 8000);
+    
     element.onerror=(e)=>{
         if(e) e.preventDefault();
+        if(loadTimeout) clearTimeout(loadTimeout);
+        
+        // Don't double-count if timeout already fired
+        if(timeoutFired) return true;
+        
+        // Track retry count
+        const retryCount = cameraRetryCounts.get(camNum) || 0;
+        const newRetryCount = retryCount + 1;
+        cameraRetryCounts.set(camNum, newRetryCount);
+        
+        // If too many failures, mark as failed and show error
+        if(newRetryCount >= MAX_RETRY_ATTEMPTS) {
+            cameraFailureStatus.set(camNum, true);
+            showCameraError(element);
+        } else {
+            // Retry with exponential backoff
+            const delay = RETRY_DELAY_BASE * Math.pow(2, retryCount);
+            setTimeout(() => {
+                // Only retry if element still exists and is still assigned to this camera
+                if(element.parentNode && element.dataset.camera == camNum.toString()) {
+                    if(cameraFailureStatus.get(camNum)) {
+                        // Already marked as failed, don't retry
+                        return;
+                    }
+                    // Retry with cache busting
+                    const retrySrc = getCameraSource(camNum, true);
+                    if(element.tagName.toLowerCase() === 'video') {
+                        element.src = retrySrc;
+                        element.load();
+                        element.play().catch(() => {});
+                    } else {
+                        element.src = retrySrc;
+                    }
+                }
+            }, delay);
+        }
+        
         return true;
     };
     
+    // Clear timeout and reset retry count when image loads successfully
+    if(element.tagName.toLowerCase() !== 'video') {
+        const originalOnload = element.onload;
+        element.onload = (e) => {
+            if(loadTimeout) clearTimeout(loadTimeout);
+            // Reset retry count and failure status on successful load
+            cameraRetryCounts.delete(camNum);
+            cameraFailureStatus.delete(camNum);
+            hideCameraError(camNum);
+            if(originalOnload) originalOnload.call(element, e);
+        };
+    }
+    
     if(element.tagName.toLowerCase()==='video'){
         element.oncanplay=null;
+        element.onerror=null; // Remove previous error handler temporarily
+        
+        // Add timeout for video - if it doesn't load after 8 seconds, consider it failed
+        let videoLoadTimeout = null;
+        let videoTimeoutFired = false;
+        videoLoadTimeout = setTimeout(() => {
+            if(element.readyState < 2 && !cameraFailureStatus.get(camNum)) {
+                videoTimeoutFired = true;
+                const retryCount = cameraRetryCounts.get(camNum) || 0;
+                cameraRetryCounts.set(camNum, retryCount + 1);
+                
+                if(retryCount + 1 >= MAX_RETRY_ATTEMPTS) {
+                    cameraFailureStatus.set(camNum, true);
+                    showCameraError(element);
+                } else {
+                    // Retry after timeout
+                    const delay = RETRY_DELAY_BASE * Math.pow(2, retryCount);
+                    setTimeout(() => {
+                        if(element.parentNode && element.dataset.camera == camNum.toString()) {
+                            if(!cameraFailureStatus.get(camNum)) {
+                                const retrySrc = getCameraSource(camNum, true);
+                                element.src = retrySrc;
+                                element.load();
+                                element.play().catch(() => {});
+                            }
+                        }
+                    }, delay);
+                }
+            }
+        }, 8000);
+        
+        // Set up error handler for video
+        const videoErrorHandler = (e) => {
+            if(e) e.preventDefault();
+            if(videoLoadTimeout) clearTimeout(videoLoadTimeout);
+            
+            // Don't double-count if timeout already fired
+            if(videoTimeoutFired) return true;
+            
+            // Track retry count
+            const retryCount = cameraRetryCounts.get(camNum) || 0;
+            const newRetryCount = retryCount + 1;
+            cameraRetryCounts.set(camNum, newRetryCount);
+            
+            // If too many failures, mark as failed and show error
+            if(newRetryCount >= MAX_RETRY_ATTEMPTS) {
+                cameraFailureStatus.set(camNum, true);
+                showCameraError(element);
+            } else {
+                // Retry with exponential backoff
+                const delay = RETRY_DELAY_BASE * Math.pow(2, retryCount);
+                setTimeout(() => {
+                    // Only retry if element still exists and is still assigned to this camera
+                    if(element.parentNode && element.dataset.camera == camNum.toString()) {
+                        if(cameraFailureStatus.get(camNum)) {
+                            // Already marked as failed, don't retry
+                            return;
+                        }
+                        // Retry with cache busting
+                        const retrySrc = getCameraSource(camNum, true);
+                        element.src = retrySrc;
+                        element.load();
+                        element.play().catch(() => {});
+                    }
+                }, delay);
+            }
+        };
+        
+        // Clear timeout and reset retry count when video can play
+        element.oncanplay = () => {
+            if(videoLoadTimeout) clearTimeout(videoLoadTimeout);
+            // Reset retry count and failure status on successful load
+            cameraRetryCounts.delete(camNum);
+            cameraFailureStatus.delete(camNum);
+            hideCameraError(camNum);
+        };
+        
+        element.onerror = videoErrorHandler;
         element.src=targetSrc;
         element.load();
         element.play().catch(err=>{
             console.error(`Camera ${camNum} video playback failed:`, err);
+            // Treat play failure as an error too - but only if video actually fails to load
+            // Don't count play() promise rejections as errors if the video is actually loading
+            // The onerror handler will catch actual loading errors
         });
     }else{
         element.onload=null;
@@ -224,4 +420,202 @@ function setImageSource(element,camNum){
 
 function preloadImage(camNum){
     return preloadCamera(camNum);
+}
+
+function showCameraError(camNumOrElement) {
+    // Find all elements for this camera
+    const camNum = typeof camNumOrElement === 'number' ? camNumOrElement : parseInt(camNumOrElement?.dataset?.camera);
+    if(!camNum || isNaN(camNum)) return;
+    
+    // Note: We now allow error overlays on active cameras too
+    
+    // Note: We don't check getRecentShown() here because:
+    // 1. When called from error handler, camera might not be assigned yet
+    // 2. The restoration logic in updateDisplay() handles showing errors only for displayed cameras
+    // So we try to show the error, and if the camera isn't displayed, it won't be visible anyway
+    
+    // Find the wrapper that contains this camera's img element
+    let container = null;
+    
+    // If an element was passed, try to find its parent wrapper first
+    if(typeof camNumOrElement !== 'number' && camNumOrElement) {
+        const element = camNumOrElement;
+        // If it's already a wrapper div, use it
+        if(element.tagName === 'DIV' && element.parentElement === document.body) {
+            // Check if it contains the right camera
+            const img = element.querySelector('img, video');
+            if(img && parseInt(img.dataset.camera) === camNum) {
+                container = element;
+            }
+        } else {
+            // If it's an img/video, walk up the tree to find the wrapper
+            let parent = element.parentElement;
+            while(parent && parent !== document.body) {
+                if(parent.tagName === 'DIV' && parent.parentElement === document.body) {
+                    // Found a direct child div of body - this is likely our wrapper
+                    // Verify it contains our element
+                    if(parent.contains(element) && parseInt(element.dataset.camera) === camNum) {
+                        container = parent;
+                        break;
+                    }
+                }
+                parent = parent.parentElement;
+            }
+        }
+    }
+    
+    // If not found, search by camera number
+    if(!container) {
+        // First, try to find active camera wrappers (event-wrapper)
+        if(typeof activeWrappers !== 'undefined' && Array.isArray(activeWrappers)) {
+            for(const wrapper of activeWrappers) {
+                if(!wrapper || wrapper.tagName !== 'DIV') continue;
+                
+                const img = wrapper.querySelector('img, video');
+                if(img) {
+                    const imgCamNum = parseInt(img.dataset.camera);
+                    if(imgCamNum === camNum) {
+                        container = wrapper;
+                        break;
+                    }
+                }
+            }
+        }
+        
+        // Then try backgroundElements array
+        if(!container && typeof backgroundElements !== 'undefined' && Array.isArray(backgroundElements)) {
+            for(const wrapper of backgroundElements) {
+                if(!wrapper || wrapper.tagName !== 'DIV') continue;
+                
+                const img = wrapper.querySelector('img, video');
+                if(img) {
+                    const imgCamNum = parseInt(img.dataset.camera);
+                    if(imgCamNum === camNum) {
+                        container = wrapper;
+                        break;
+                    }
+                }
+            }
+        }
+        
+        // If not found, search through all body > div elements
+        if(!container) {
+            Array.from(document.body.children).forEach(child => {
+                if(child.tagName !== 'DIV') return;
+                
+                // Check if this wrapper contains an img/video with matching camera number
+                const img = child.querySelector('img, video');
+                if(img) {
+                    const imgCamNum = parseInt(img.dataset.camera);
+                    if(imgCamNum === camNum) {
+                        container = child;
+                        return;
+                    }
+                }
+            });
+        }
+    }
+    
+    if(!container) {
+        // Still not found - this shouldn't happen but return gracefully
+        // But try one more time: if an element was passed, just find any wrapper
+        // and we'll use it (the restoration logic will handle proper positioning)
+        if(typeof camNumOrElement !== 'number' && camNumOrElement && camNumOrElement.parentElement) {
+            let parent = camNumOrElement.parentElement;
+            while(parent && parent !== document.body) {
+                if(parent.tagName === 'DIV' && parent.parentElement === document.body && !parent.classList.contains('event-wrapper')) {
+                    container = parent;
+                    // Ensure the img inside has the right camera number
+                    const img = container.querySelector('img, video');
+                    if(img) {
+                        img.dataset.camera = camNum.toString();
+                    }
+                    break;
+                }
+                parent = parent.parentElement;
+            }
+        }
+        
+        if(!container) {
+            return;
+        }
+    }
+    
+    // Ensure container is a div with position relative
+    if(container.tagName !== 'DIV') {
+        // This shouldn't happen with the new structure, but handle it
+        return;
+    }
+    
+    // Ensure the img/video inside has the correct camera number set
+    const img = container.querySelector('img, video');
+    if(img && (!img.dataset.camera || parseInt(img.dataset.camera) !== camNum)) {
+        img.dataset.camera = camNum.toString();
+    }
+    
+    // Ensure container has position relative
+    const containerStyle = window.getComputedStyle(container);
+    if(containerStyle.position === 'static' || !containerStyle.position) {
+        container.style.position = 'relative';
+    }
+    
+    // Ensure container width and height are set (for proper overlay positioning)
+    if(!container.style.width) {
+        container.style.width = '100%';
+    }
+    if(!container.style.height) {
+        container.style.height = '100%';
+    }
+    
+    // Remove ALL existing error overlays first to avoid duplicates
+    const existingOverlays = container.querySelectorAll('.camera-error-overlay');
+    existingOverlays.forEach(overlay => overlay.remove());
+    
+    // Create new error overlay (only one)
+    const errorOverlay = document.createElement('div');
+    errorOverlay.className = 'camera-error-overlay';
+    errorOverlay.innerHTML = `
+        <div class="camera-error-content">
+            <div class="camera-error-title">CAMERA ${camNum} OFFLINE</div>
+            <div class="camera-error-subtitle">No signal available</div>
+        </div>
+    `;
+    container.appendChild(errorOverlay);
+    errorOverlay.style.display = 'flex';
+}
+
+function hideCameraError(camNumOrElement) {
+    const camNum = typeof camNumOrElement === 'number' ? camNumOrElement : parseInt(camNumOrElement?.dataset?.camera);
+    if(!camNum || isNaN(camNum)) return;
+    
+    // Find all error overlays for this camera and remove them
+    document.querySelectorAll('.camera-error-overlay').forEach(overlay => {
+        const camNumText = overlay.querySelector('.camera-error-title')?.textContent?.match(/CAMERA (\d+)/);
+        if(camNumText && parseInt(camNumText[1]) === camNum) {
+            overlay.remove();
+        }
+    });
+    
+    // Also find all wrappers containing this camera and remove error overlays
+    // Check backgroundElements first
+    if(typeof backgroundElements !== 'undefined' && Array.isArray(backgroundElements)) {
+        backgroundElements.forEach(wrapper => {
+            const img = wrapper.querySelector(`img[data-camera="${camNum}"]`);
+            if(img) {
+                const overlays = wrapper.querySelectorAll('.camera-error-overlay');
+                overlays.forEach(overlay => overlay.remove());
+            }
+        });
+    }
+    
+    // Also check active wrappers
+    if(typeof activeWrappers !== 'undefined' && Array.isArray(activeWrappers)) {
+        activeWrappers.forEach(wrapper => {
+            const img = wrapper.querySelector(`img[data-camera="${camNum}"]`);
+            if(img) {
+                const overlays = wrapper.querySelectorAll('.camera-error-overlay');
+                overlays.forEach(overlay => overlay.remove());
+            }
+        });
+    }
 }

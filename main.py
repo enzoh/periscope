@@ -247,10 +247,14 @@ class CORSProxyHandler(http.server.SimpleHTTPRequestHandler):
                 self.end_headers()
 
                 while True:
-                    chunk = stream.read(1024)
-                    if not chunk:
+                    try:
+                        chunk = stream.read(1024)
+                        if not chunk:
+                            break
+                        self.wfile.write(chunk)
+                    except (ConnectionResetError, BrokenPipeError, OSError):
+                        # Client disconnected or stream ended, that's normal
                         break
-                    self.wfile.write(chunk)
             except urllib.error.HTTPError as e:
                 logger.debug(f"Camera {cam_id}: HTTP error {e.code}")
                 raise
@@ -258,18 +262,29 @@ class CORSProxyHandler(http.server.SimpleHTTPRequestHandler):
                 logger.debug(f"Camera {cam_id}: Connection error: {e}")
                 raise
 
+        except (ConnectionResetError, BrokenPipeError):
+            # Client disconnected, that's normal - don't log or send error response
+            pass
         except urllib.error.URLError as err:
             logger.debug(f'Camera {cam_id} at {ip}: {err}')
-            self.send_response(502)
-            self.send_header('Content-Type', 'text/plain')
-            self.end_headers()
-            self.wfile.write(f'Camera {cam_id} unavailable: {err}'.encode())
+            try:
+                self.send_response(502)
+                self.send_header('Content-Type', 'text/plain')
+                self.end_headers()
+                self.wfile.write(f'Camera {cam_id} unavailable: {err}'.encode())
+            except (ConnectionResetError, BrokenPipeError):
+                # Client already disconnected
+                pass
         except Exception as err:
             logger.debug(f'Camera {cam_id} error: {err}')
-            self.send_response(502)
-            self.send_header('Content-Type', 'text/plain')
-            self.end_headers()
-            self.wfile.write(f'Camera {cam_id} error: {err}'.encode())
+            try:
+                self.send_response(502)
+                self.send_header('Content-Type', 'text/plain')
+                self.end_headers()
+                self.wfile.write(f'Camera {cam_id} error: {err}'.encode())
+            except (ConnectionResetError, BrokenPipeError):
+                # Client already disconnected
+                pass
 
 def run_server(port):
     """Run a single server instance on the specified port"""

@@ -6,6 +6,18 @@ const activeEventTypes=new Map();
 
 let updateDisplayTimeout=null;
 
+// Used to keep Recent_Shown stable when the number of active cameras changes.
+// When the shown count shrinks (e.g., 12 -> 8), we rotate the *previously shown*
+// list so previousReplacement becomes the first visible item, then take N.
+let lastRecentShown=[];
+let lastCountToShow=null;
+
+function rotateToStart(arr,startValue){
+    const idx=arr.indexOf(startValue);
+    if(idx===-1)return arr.slice();
+    return arr.slice(idx).concat(arr.slice(0,idx));
+}
+
 function getRecentShown(){
     const activeCount=active.length;
     let countToShow=16;
@@ -25,7 +37,29 @@ function getRecentShown(){
         recentNonActive.push(...nonActive);
     }
     
-    return recentNonActive.slice(0,countToShow);
+    // If the visible count is shrinking, rotate the *previous* shown list so
+    // previousReplacement stays visible (at the front) instead of being dropped.
+    if(
+        typeof lastCountToShow==='number' &&
+        lastCountToShow>countToShow &&
+        Array.isArray(lastRecentShown) &&
+        lastRecentShown.length
+    ){
+        // Use the last shown list, but remove any that are now active.
+        const lastNonActive=lastRecentShown.filter(c=>!active.includes(c));
+        if(lastNonActive.length){
+            const rotated=rotateToStart(lastNonActive,previousReplacement);
+            const nextShown=rotated.slice(0,countToShow);
+            lastCountToShow=countToShow;
+            lastRecentShown=nextShown.slice();
+            return nextShown;
+        }
+    }
+
+    const nextShown=recentNonActive.slice(0,countToShow);
+    lastCountToShow=countToShow;
+    lastRecentShown=nextShown.slice();
+    return nextShown;
 }
 
 function getActiveShown(){
@@ -43,7 +77,7 @@ function onCameraActivate(camNum,eventType){
     if(activeQueue.has(camNum)){
         clearTimeout(activeQueue.get(camNum));
     }
-    const timeoutId=setTimeout(()=>onCameraDeactivate(camNum),10000);
+    const timeoutId=setTimeout(()=>onCameraDeactivate(camNum),30000);
     activeQueue.set(camNum,timeoutId);
     
     // Ensure recent contains all non-active cameras (should be automatic, but double-check)
@@ -120,163 +154,206 @@ function onCameraDeactivate(camNum){
 function updateDisplay(){
     if(updateDisplayTimeout)clearTimeout(updateDisplayTimeout);
     updateDisplayTimeout=setTimeout(()=>{
-        const imgs=[];
-        document.querySelectorAll('body>img,body>.event-wrapper>img').forEach(el=>{
-            imgs.push(el.parentElement.classList.contains('event-wrapper')?el.parentElement:el);
-        });
-        while(imgs.length<16){
-            const img=document.createElement('img');
-            document.body.appendChild(img);
-            imgs.push(img);
+        // Ensure we have the fixed elements initialized
+        if(!backgroundElements || backgroundElements.length!==16 || !activeWrappers || activeWrappers.length!==4){
+            // If not initialized, we can't proceed - elements will be created on next init
+            return;
         }
+        
         const activeShown=getActiveShown();
         const recentShown=getRecentShown();
         
-        const occupied=new Set();
-        let imgIndex=0;
+        // Remove all error overlays - they'll be recreated if needed
+        document.querySelectorAll('.camera-error-overlay').forEach(overlay=>overlay.remove());
         
-        for(let activeIdx=0;activeIdx<activeShown.length;activeIdx++){
-            if(imgIndex>=imgs.length)break;
-            const camNum=activeShown[activeIdx];
+        const occupied=new Set();
+        
+        // Step 1: Handle active cameras - assign to fixed activeWrappers
+        const activePositions = [
+            {row:1,col:1},
+            {row:1,col:3},
+            {row:3,col:1},
+            {row:3,col:3}
+        ];
+        
+        for(let i=0; i<activeWrappers.length; i++){
+            const wrapper = activeWrappers[i];
+            const img = wrapper.querySelector('img');
+            const label = wrapper.querySelector('.event-label');
             
-            let row,col;
-            if(activeIdx===0){
-                row=1;
-                col=1;
-            }else{
-                let found=false;
-                for(let r=1;r<=3;r++){
-                    for(let c=1;c<=3;c++){
-                        const cell1=(r-1)*4+c;
-                        const cell2=(r-1)*4+c+1;
-                        const cell3=r*4+c;
-                        const cell4=r*4+c+1;
-                        if(!occupied.has(cell1)&&!occupied.has(cell2)&&
-                           !occupied.has(cell3)&&!occupied.has(cell4)){
-                            row=r;
-                            col=c;
-                            found=true;
-                            break;
-                        }
-                    }
-                    if(found)break;
-                }
-                if(!found)break;
-            }
-            
-            let img=imgs[imgIndex];
-            const eventType=activeEventTypes.get(camNum)||'unknown';
-            const priority=priorityMap.get(`${camNum}-${eventType}`)||'low';
-            
-            let wrapper=img.parentElement;
-            if(!wrapper||!wrapper.classList.contains('event-wrapper')){
-                wrapper=document.createElement('div');
-                wrapper.className='event-wrapper';
-                wrapper.style.gridColumn=img.style.gridColumn;
-                wrapper.style.gridRow=img.style.gridRow;
-                wrapper.style.display=img.style.display;
-                img.style.gridColumn='';
-                img.style.gridRow='';
-                img.style.display='';
-                img.parentNode.replaceChild(wrapper,img);
-                wrapper.appendChild(img);
-            }
-            
-            img.dataset.camera=camNum;
-            img.className='active';
-            wrapper.style.gridColumn=`${col} / span 2`;
-            wrapper.style.gridRow=`${row} / span 2`;
-            wrapper.style.display='';
-            
-            let label=wrapper.querySelector('.event-label');
-            if(!label){
-                label=document.createElement('span');
-                label.className='event-label';
-                wrapper.appendChild(label);
-            }
-            label.className=`event-label ${priority}`;
-            label.textContent=eventType;
-            
-            const elementAfterSet=setImageSource(img,camNum);
-            if(elementAfterSet&&elementAfterSet.parentElement!==wrapper){
-                wrapper.replaceChild(elementAfterSet,img);
-            }
-            
-            const cell1=(row-1)*4+col;
-            const cell2=(row-1)*4+col+1;
-            const cell3=row*4+col;
-            const cell4=row*4+col+1;
+            if(i < activeShown.length){
+                const camNum = activeShown[i];
+                const pos = activePositions[i];
+                const eventType = activeEventTypes.get(camNum) || 'unknown';
+                const priority = priorityMap.get(`${camNum}-${eventType}`) || 'low';
+                
+                // Update wrapper position
+                wrapper.style.gridColumn = `${pos.col} / span 2`;
+                wrapper.style.gridRow = `${pos.row} / span 2`;
+                wrapper.style.display = '';
+                
+                // Update image
+                img.dataset.camera = camNum.toString();
+                img.className = 'active';
+                setImageSource(img, camNum);
+                
+                // Update label
+                label.className = `event-label ${priority}`;
+                label.textContent = eventType;
+                
+                // Mark cells as occupied
+                const cell1=(pos.row-1)*4+pos.col;
+                const cell2=(pos.row-1)*4+pos.col+1;
+                const cell3=pos.row*4+pos.col;
+                const cell4=pos.row*4+pos.col+1;
             occupied.add(cell1);
             occupied.add(cell2);
             occupied.add(cell3);
             occupied.add(cell4);
-            imgIndex++;
+                
+                // Hide error overlay for active cameras
+                if(typeof hideCameraError === 'function') {
+                    hideCameraError(camNum);
+                }
+                wrapper.querySelectorAll('.camera-error-overlay').forEach(overlay => overlay.remove());
+            }else{
+                // Hide unused active wrappers
+                wrapper.style.display = 'none';
+            }
         }
         
-        let recentIndex=0;
-        
-        if(activeShown.length===1){
-            const recentPositions=[
+        // Step 2: Handle recent cameras - assign to fixed backgroundElements
+        // Determine positions for recent cameras based on number of active cameras
+        let recentPositions = [];
+        if(activeShown.length === 1){
+            // With 1 active camera: 12 recent cameras - top-right + rows 3-4
+            // Filter out occupied cells
+            const candidatePositions = [
                 {row:1,col:3},{row:1,col:4},{row:2,col:3},{row:2,col:4},
                 {row:3,col:1},{row:3,col:2},{row:3,col:3},{row:3,col:4},
                 {row:4,col:1},{row:4,col:2},{row:4,col:3},{row:4,col:4}
             ];
-            for(const pos of recentPositions){
-                if(imgIndex>=imgs.length||recentIndex>=recentShown.length)break;
+            for(const pos of candidatePositions){
                 const cellId=(pos.row-1)*4+pos.col;
                 if(!occupied.has(cellId)){
-                    const camNum=recentShown[recentIndex];
-                    if(camNum){
-                        let img=imgs[imgIndex];
-                        let wrapper=img.parentElement;
-                        if(wrapper&&wrapper.classList.contains('event-wrapper')){
-                            wrapper.parentNode.replaceChild(img,wrapper);
-                            wrapper.remove();
-                        }
-                        img.dataset.camera=camNum;
-                        img.className='';
-                        img.dataset.eventType='';
-                        img.style.gridColumn=pos.col;
-                        img.style.gridRow=pos.row;
-                        img.style.display='';
-                        setImageSource(img,camNum);
-                        imgIndex++;
-                        recentIndex++;
-                    }
+                    recentPositions.push(pos);
                 }
             }
+        }else if(activeShown.length === 2){
+            // With 2 active cameras: 8 recent cameras - rows 3-4 only
+            recentPositions = [
+                {row:3,col:1},{row:3,col:2},{row:3,col:3},{row:3,col:4},
+                {row:4,col:1},{row:4,col:2},{row:4,col:3},{row:4,col:4}
+            ];
+            // Filter out occupied cells (though with 2 active cameras, rows 3-4 should be free)
+            recentPositions = recentPositions.filter(pos => {
+                const cellId=(pos.row-1)*4+pos.col;
+                return !occupied.has(cellId);
+            });
         }else{
+            // With 0, 3, or 4 active cameras: fill remaining positions
             for(let row=1;row<=4;row++){
                 for(let col=1;col<=4;col++){
-                    if(imgIndex>=imgs.length||recentIndex>=recentShown.length)break;
                     const cellId=(row-1)*4+col;
                     if(!occupied.has(cellId)){
-                        const camNum=recentShown[recentIndex];
-                        if(camNum){
-                            let img=imgs[imgIndex];
-                            let wrapper=img.parentElement;
-                            if(wrapper&&wrapper.classList.contains('event-wrapper')){
-                                wrapper.parentNode.replaceChild(img,wrapper);
-                                wrapper.remove();
-                            }
-                            img.dataset.camera=camNum;
-                            img.className='';
-                            img.dataset.eventType='';
-                            img.style.gridColumn=col;
-                            img.style.gridRow=row;
-                            img.style.display='';
-                            setImageSource(img,camNum);
-                            imgIndex++;
-                            recentIndex++;
-                        }
+                        recentPositions.push({row,col});
                     }
                 }
-                if(imgIndex>=imgs.length||recentIndex>=recentShown.length)break;
             }
         }
         
-        for(let i=imgIndex;i<imgs.length;i++){
-            imgs[i].style.display='none';
+        // First pass: Hide any background elements that are in occupied cells
+        backgroundElements.forEach(wrapper => {
+            if(!wrapper) return;
+            
+            const img = wrapper.querySelector('img');
+            if(img && img.classList.contains('active')) return; // Skip active camera elements
+            
+            const gridRow = wrapper.style.gridRow || window.getComputedStyle(wrapper).gridRowStart || '';
+            const gridCol = wrapper.style.gridColumn || window.getComputedStyle(wrapper).gridColumnStart || '';
+            
+            let row = null, col = null;
+            
+            // Parse row
+            if(gridRow){
+                const rowMatch = gridRow.match(/^(\d+)/);
+                if(rowMatch) row = parseInt(rowMatch[1]);
+            }
+            
+            // Parse col
+            if(gridCol){
+                const colMatch = gridCol.match(/^(\d+)/);
+                if(colMatch) col = parseInt(colMatch[1]);
+            }
+            
+            // If wrapper is in an occupied cell, hide it
+            if(row && col){
+                const cellId = (row-1)*4 + col;
+                if(occupied.has(cellId)){
+                    wrapper.style.display = 'none';
+                }
+            }
+        });
+        
+        // Assign recent cameras to background elements (which are now wrappers)
+        // Filter recentShown to exclude active cameras (in case there's overlap)
+        const activeSet = new Set(activeShown);
+        const recentToShow = recentShown.filter(cam => !activeSet.has(cam));
+        
+        let bgIndex = 0;
+        for(let i=0; i<recentPositions.length && i<recentToShow.length && bgIndex<backgroundElements.length; i++){
+            const pos = recentPositions[i];
+            const camNum = recentToShow[i];
+            const wrapper = backgroundElements[bgIndex];
+            const img = wrapper.querySelector('img');
+            
+            if(!img) continue;
+            
+            // Skip if this element is marked as active
+            if(img.classList.contains('active')) {
+                bgIndex++;
+                i--; // Retry this position
+                continue;
+            }
+            
+            // Update wrapper position
+            wrapper.style.gridColumn = pos.col;
+            wrapper.style.gridRow = pos.row;
+            wrapper.style.display = '';
+            
+            // Update img element
+            img.dataset.camera = camNum.toString();
+            img.className = '';
+            img.dataset.eventType = '';
+            img.style.gridColumn = '';
+            img.style.gridRow = '';
+            img.style.display = '';
+            setImageSource(img, camNum);
+            bgIndex++;
+        }
+        
+        // Hide unused background elements
+        for(let i=bgIndex; i<backgroundElements.length; i++){
+            backgroundElements[i].style.display = 'none';
+        }
+        
+        // Restore error overlays for cameras that are marked as failed
+        // Show errors for both active and recent cameras
+        if(typeof cameraFailureStatus !== 'undefined' && typeof showCameraError === 'function') {
+            // Show errors for active cameras
+            activeShown.forEach(camNum => {
+                if(cameraFailureStatus.get(camNum)) {
+                    showCameraError(camNum);
+                }
+            });
+            
+            // Show errors for recent cameras (excluding active ones to avoid duplicates)
+            const activeSet = new Set(activeShown);
+            recentShown.forEach(camNum => {
+                if(cameraFailureStatus.get(camNum) && !activeSet.has(camNum)) {
+                    showCameraError(camNum);
+                }
+            });
         }
     },50);
 }

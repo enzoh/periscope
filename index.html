@@ -36,6 +36,10 @@ img.active{grid-column:span 2;grid-row:span 2}
     position: relative;
     width: 100%;
     height: 100%;
+    z-index: 5;
+}
+.event-wrapper:has(.active) {
+    z-index: 20;
 }
 .event-label {
     position: absolute;
@@ -58,6 +62,38 @@ img.active{grid-column:span 2;grid-row:span 2}
 }
 .event-label.high {
     color: red;
+}
+.camera-error-overlay {
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background: rgba(0, 0, 0, 0.85);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 15;
+    pointer-events: none;
+}
+.camera-error-content {
+    text-align: center;
+    color: #fff;
+    font-family: monospace;
+    padding: 20px;
+}
+.camera-error-title {
+    font-size: 18px;
+    font-weight: bold;
+    color: #ff4444;
+    margin-bottom: 8px;
+    text-transform: uppercase;
+    letter-spacing: 2px;
+}
+.camera-error-subtitle {
+    font-size: 14px;
+    color: #ccc;
+    opacity: 0.8;
 }
 </style>
 <body>
