@@ -58,7 +58,7 @@ img.active{grid-column:span 2;grid-row:span 2}
     text-overflow: ellipsis;
     color: yellow;
     pointer-events: none;
-    z-index: 1;
+    z-index: 20; /* Higher than error overlay (z-index: 15) so event text appears on top */
 }
 .event-label.high {
     color: red;

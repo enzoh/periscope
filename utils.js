@@ -35,6 +35,18 @@ const workingCameras = Array.from({length:26}, (_, i) => i + 1);
 const MAX_RETRY_ATTEMPTS = 3; // 3 retries for real cameras (network hiccups are common)
 const RETRY_DELAY_BASE = 2000; // 2 seconds base delay for network recovery
 
+// ============================================================================
+// VIDEO FORMAT CONFIGURATION
+// ============================================================================
+// To switch between MJPEG and H.264, simply change the value below:
+//   - 'mjpeg' = Current format (default) - works with all cameras
+//   - 'h264'  = H.264 encoding - better compression, lower bandwidth
+// 
+// See H264_GUIDE.md for full setup instructions
+// Test with test_h264.html before switching all cameras
+// ============================================================================
+const VIDEO_FORMAT = 'mjpeg'; // Change to 'h264' to enable H.264 encoding
+
 function setLiveFeedSources(){
     for(let cam of workingCameras){
         let port = 8001;
@@ -44,7 +56,10 @@ function setLiveFeedSources(){
         else if([6, 14, 15, 16].includes(cam)) port = 8003;
         else if([17, 18, 19, 20].includes(cam)) port = 8004;
         else if([21, 22, 23, 24, 25, 26].includes(cam)) port = 8005;
-        cameraSources.set(cam, `http://127.0.0.1:${port}/video${cam}`);
+        
+        // Add format parameter if using H.264
+        const formatParam = VIDEO_FORMAT !== 'mjpeg' ? `?format=${VIDEO_FORMAT}` : '';
+        cameraSources.set(cam, `http://127.0.0.1:${port}/video${cam}${formatParam}`);
     }
 }
 
@@ -65,6 +80,11 @@ function getCameraSource(camNum,useCacheBust=false){
 function isVideoSource(camNum){
     const src = cameraSources.get(camNum);
     if (!src) return false;
+    
+    // If using H.264 format, use <video> tag
+    if (VIDEO_FORMAT === 'h264' && src.includes('format=h264')) {
+        return true;
+    }
     
     // MJPEG streams (multipart/x-mixed-replace) should use <img>, not <video>
     // Check if it's a video file extension (actual video codecs)

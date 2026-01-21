@@ -77,7 +77,7 @@ function onCameraActivate(camNum,eventType){
     if(activeQueue.has(camNum)){
         clearTimeout(activeQueue.get(camNum));
     }
-    const timeoutId=setTimeout(()=>onCameraDeactivate(camNum),30000);
+    const timeoutId=setTimeout(()=>onCameraDeactivate(camNum),10000);
     activeQueue.set(camNum,timeoutId);
     
     // Ensure recent contains all non-active cameras (should be automatic, but double-check)
@@ -86,6 +86,33 @@ function onCameraActivate(camNum,eventType){
     const missing=nonActive.filter(c=>!recent.includes(c));
     // Add missing cameras at the end (they're the least recent)
     recent.push(...missing);
+    
+    // Reorder recent array to match recentShown order
+    // This ensures recent array reflects the same logic that determines what's displayed
+    const recentShown = getRecentShown();
+    const recentSet = new Set(recent);
+    const shownSet = new Set(recentShown);
+    
+    // Create new ordered array: shown cameras first (in shown order), then rest
+    const reorderedRecent = [];
+    
+    // Add shown cameras in their shown order
+    for(const cam of recentShown){
+        if(recentSet.has(cam)){
+            reorderedRecent.push(cam);
+        }
+    }
+    
+    // Add remaining cameras in their original order
+    for(const cam of recent){
+        if(!shownSet.has(cam)){
+            reorderedRecent.push(cam);
+        }
+    }
+    
+    // Replace recent with reordered version
+    recent.length = 0;
+    recent.push(...reorderedRecent);
     
     updateDisplay();
     console.log('Recent:',recent.slice(),'Recent_Shown:',getRecentShown(),'Active:',active.slice(),'Active_Shown:',getActiveShown(),'Previous_Replacement:',previousReplacement);
@@ -147,6 +174,34 @@ function onCameraDeactivate(camNum){
     recent.push(...missing);
     
     previousReplacement=camNum;
+    
+    // Reorder recent array to match recentShown order
+    // This ensures recent array reflects the same logic that determines what's displayed
+    const updatedRecentShown = getRecentShown();
+    const recentSet = new Set(recent);
+    const shownSet = new Set(updatedRecentShown);
+    
+    // Create new ordered array: shown cameras first (in shown order), then rest
+    const reorderedRecent = [];
+    
+    // Add shown cameras in their shown order
+    for(const cam of updatedRecentShown){
+        if(recentSet.has(cam)){
+            reorderedRecent.push(cam);
+        }
+    }
+    
+    // Add remaining cameras in their original order
+    for(const cam of recent){
+        if(!shownSet.has(cam)){
+            reorderedRecent.push(cam);
+        }
+    }
+    
+    // Replace recent with reordered version
+    recent.length = 0;
+    recent.push(...reorderedRecent);
+    
     updateDisplay();
     console.log('Recent:',recent.slice(),'Recent_Shown:',getRecentShown(),'Active:',active.slice(),'Active_Shown:',getActiveShown(),'Previous_Replacement:',previousReplacement);
 }

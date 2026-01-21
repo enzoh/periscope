@@ -4,6 +4,7 @@ import http.server
 import socketserver
 import urllib.request
 import urllib.error
+import urllib.parse
 import sys
 import os
 import time
@@ -177,12 +178,24 @@ class CORSProxyHandler(http.server.SimpleHTTPRequestHandler):
                 pass
     
     def proxy_camera_stream(self):
-        """Proxy camera video streams with Digest authentication"""
+        """Proxy camera video streams with Digest authentication
+        Supports both MJPEG and H.264 streams based on requested format
+        """
         cam_id = None
         ip = None
         url = None
         try:
-            cam_id = self.path.strip("/video")
+            # Parse camera ID and format from path
+            # /video1 or /video1?format=h264 or /video1?format=mjpeg
+            path_parts = self.path.split('?')
+            cam_id = path_parts[0].strip("/video")
+            
+            # Parse query parameters
+            format_type = 'mjpeg'  # default
+            if len(path_parts) > 1:
+                params = urllib.parse.parse_qs(path_parts[1])
+                format_type = params.get('format', ['mjpeg'])[0].lower()
+            
             username = CAMERA_USERNAME
             password = CAMERA_PASSWORD
             
@@ -192,10 +205,22 @@ class CORSProxyHandler(http.server.SimpleHTTPRequestHandler):
             
             camera_ip_prefix = os.environ.get('CAMERA_IP_PREFIX', '10.10.0')
             ip = f"{camera_ip_prefix}.{cam_id}"
-            uri = "/video1s3.mjpg"
+            
+            # Choose URI based on format
+            # Most IP cameras support multiple streams:
+            # - /video1s3.mjpg - MJPEG stream
+            # - /video1s1 or /h264 - H.264 stream (varies by camera model)
+            if format_type == 'h264':
+                # Try common H.264 endpoints for IP cameras
+                # Adjust based on your camera model
+                uri = "/video1s1"  # Common for Honeywell/Hikvision
+                # Alternative: uri = "/Streaming/Channels/101" for some models
+            else:
+                uri = "/video1s3.mjpg"  # MJPEG
+            
             url = f"https://{ip}{uri}"
             
-            logger.debug(f"camera{cam_id}: Proxying stream from {ip}")
+            logger.debug(f"camera{cam_id}: Proxying {format_type} stream from {ip}")
 
             context = ssl._create_unverified_context()
 
@@ -243,7 +268,14 @@ class CORSProxyHandler(http.server.SimpleHTTPRequestHandler):
                 stream = urllib.request.urlopen(req2, context=context, timeout=10)
                 pass  # Successfully connected, no need to log
                 self.send_response(200)
-                self.send_header("Content-Type", stream.headers.get("Content-Type", "multipart/x-mixed-replace"))
+                
+                # Set appropriate content type based on format
+                if format_type == 'h264':
+                    # For raw H.264, use video/H264 or application/octet-stream
+                    self.send_header("Content-Type", "video/H264")
+                else:
+                    self.send_header("Content-Type", stream.headers.get("Content-Type", "multipart/x-mixed-replace"))
+                
                 self.end_headers()
 
                 while True:

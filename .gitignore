@@ -13,6 +13,10 @@ test.html
 test.js
 test_*.py
 test_*.js
+test_*.html
+
+# Reference/documentation files (not used in main code)
+camera_endpoints.json
 
 # Environment
 .env
