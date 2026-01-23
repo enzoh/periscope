@@ -233,7 +233,7 @@ function updateDisplay(){
         
         for(let i=0; i<activeWrappers.length; i++){
             const wrapper = activeWrappers[i];
-            const img = wrapper.querySelector('img');
+            let mediaElement = wrapper.querySelector('img, video');
             const label = wrapper.querySelector('.event-label');
             
             if(i < activeShown.length){
@@ -241,21 +241,27 @@ function updateDisplay(){
                 const pos = activePositions[i];
                 const eventType = activeEventTypes.get(camNum) || 'unknown';
                 const priority = priorityMap.get(`${camNum}-${eventType}`) || 'low';
-                
+            
                 // Update wrapper position
                 wrapper.style.gridColumn = `${pos.col} / span 2`;
                 wrapper.style.gridRow = `${pos.row} / span 2`;
                 wrapper.style.display = '';
-                
-                // Update image
-                img.dataset.camera = camNum.toString();
-                img.className = 'active';
-                setImageSource(img, camNum);
+            
+                // Update media element (may be img or video)
+                if(!mediaElement) {
+                    // Create initial img if missing
+                    mediaElement = document.createElement('img');
+                    wrapper.insertBefore(mediaElement, label);
+                }
+                mediaElement.dataset.camera = camNum.toString();
+                mediaElement.className = 'active';
+                // setImageSource may replace img with video, so get the new element
+                mediaElement = setImageSource(mediaElement, camNum);
                 
                 // Update label
                 label.className = `event-label ${priority}`;
                 label.textContent = eventType;
-                
+            
                 // Mark cells as occupied
                 const cell1=(pos.row-1)*4+pos.col;
                 const cell2=(pos.row-1)*4+pos.col+1;
@@ -269,7 +275,7 @@ function updateDisplay(){
                 // Hide error overlay for active cameras
                 if(typeof hideCameraError === 'function') {
                     hideCameraError(camNum);
-                }
+        }
                 wrapper.querySelectorAll('.camera-error-overlay').forEach(overlay => overlay.remove());
             }else{
                 // Hide unused active wrappers
@@ -321,8 +327,8 @@ function updateDisplay(){
         backgroundElements.forEach(wrapper => {
             if(!wrapper) return;
             
-            const img = wrapper.querySelector('img');
-            if(img && img.classList.contains('active')) return; // Skip active camera elements
+            const mediaElement = wrapper.querySelector('img, video');
+            if(mediaElement && mediaElement.classList.contains('active')) return; // Skip active camera elements
             
             const gridRow = wrapper.style.gridRow || window.getComputedStyle(wrapper).gridRowStart || '';
             const gridCol = wrapper.style.gridColumn || window.getComputedStyle(wrapper).gridColumnStart || '';
@@ -355,41 +361,63 @@ function updateDisplay(){
         const activeSet = new Set(activeShown);
         const recentToShow = recentShown.filter(cam => !activeSet.has(cam));
         
-        let bgIndex = 0;
-        for(let i=0; i<recentPositions.length && i<recentToShow.length && bgIndex<backgroundElements.length; i++){
+        const usedBackgroundElements = new Set();
+        
+        for(let i=0; i<recentPositions.length && i<recentToShow.length; i++){
             const pos = recentPositions[i];
             const camNum = recentToShow[i];
-            const wrapper = backgroundElements[bgIndex];
-            const img = wrapper.querySelector('img');
             
-            if(!img) continue;
-            
-            // Skip if this element is marked as active
-            if(img.classList.contains('active')) {
-                bgIndex++;
-                i--; // Retry this position
-                continue;
+            // Find an available background element (not active, not already used)
+            let wrapper = null;
+            for(let bgIndex=0; bgIndex<backgroundElements.length; bgIndex++){
+                if(usedBackgroundElements.has(bgIndex)) continue;
+                
+                const candidate = backgroundElements[bgIndex];
+                const mediaElement = candidate.querySelector('img, video');
+                
+                if(!mediaElement) continue;
+                if(mediaElement.classList.contains('active')) continue;
+                
+                wrapper = candidate;
+                usedBackgroundElements.add(bgIndex);
+                break;
             }
+            
+            if(!wrapper) continue;
+            
+            let mediaElement = wrapper.querySelector('img, video');
+            if(!mediaElement) {
+                // Create initial img if missing
+                mediaElement = document.createElement('img');
+                wrapper.appendChild(mediaElement);
+                                }
             
             // Update wrapper position
             wrapper.style.gridColumn = pos.col;
             wrapper.style.gridRow = pos.row;
             wrapper.style.display = '';
             
-            // Update img element
-            img.dataset.camera = camNum.toString();
-            img.className = '';
-            img.dataset.eventType = '';
-            img.style.gridColumn = '';
-            img.style.gridRow = '';
-            img.style.display = '';
-            setImageSource(img, camNum);
-            bgIndex++;
+            // Update media element
+            mediaElement.dataset.camera = camNum.toString();
+            mediaElement.className = '';
+            mediaElement.dataset.eventType = '';
+            mediaElement.style.gridColumn = '';
+            mediaElement.style.gridRow = '';
+            mediaElement.style.display = '';
+            // setImageSource may replace img with video, update reference
+            mediaElement = setImageSource(mediaElement, camNum);
         }
         
         // Hide unused background elements
-        for(let i=bgIndex; i<backgroundElements.length; i++){
-            backgroundElements[i].style.display = 'none';
+        for(let bgIndex=0; bgIndex<backgroundElements.length; bgIndex++){
+            if(!usedBackgroundElements.has(bgIndex)){
+                const wrapper = backgroundElements[bgIndex];
+                const mediaElement = wrapper.querySelector('img, video');
+                // Only hide if not active
+                if(mediaElement && !mediaElement.classList.contains('active')){
+                    wrapper.style.display = 'none';
+                }
+            }
         }
         
         // Restore error overlays for cameras that are marked as failed
@@ -407,8 +435,8 @@ function updateDisplay(){
             recentShown.forEach(camNum => {
                 if(cameraFailureStatus.get(camNum) && !activeSet.has(camNum)) {
                     showCameraError(camNum);
-                }
-            });
+            }
+        });
         }
     },50);
 }

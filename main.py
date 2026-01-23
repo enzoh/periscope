@@ -14,13 +14,17 @@ import ssl
 import getpass
 import logging
 import threading
+import subprocess
+import platform
+import queue
 from pathlib import Path
 
 from md5 import hash
+import mpegts_stream
 
 # Configure logging
 logging.basicConfig(
-    level=logging.CRITICAL,  # Suppress all logs except critical errors
+    level=logging.DEBUG,  # Enable debug logs for H.264 troubleshooting
     format='%(asctime)s - %(levelname)s - %(message)s',
     stream=sys.stdout,
     datefmt='%Y-%m-%d %H:%M:%S'
@@ -52,6 +56,44 @@ class CORSProxyHandler(http.server.SimpleHTTPRequestHandler):
         self.end_headers()
     
     def do_GET(self):
+        # Handle MPEG-TS live stream (ultra-low latency)
+        if self.path.startswith('/mpegts/'):
+            cam_id_str = self.path.split('/')[-1]
+            try:
+                cam_id = int(cam_id_str)
+            except ValueError:
+                self.send_error(400, "Invalid camera ID")
+                return
+            
+            username = CAMERA_USERNAME
+            password = CAMERA_PASSWORD
+            
+            if not password:
+                self.send_error(500, "Camera password not configured")
+                return
+            
+            # Start streaming MPEG-TS
+            self.send_response(200)
+            self.send_header('Content-Type', 'video/mp2t')
+            self.send_header('Cache-Control', 'no-cache, no-store, must-revalidate')
+            self.send_header('Pragma', 'no-cache')
+            self.send_header('Expires', '0')
+            self.send_header('Connection', 'keep-alive')
+            self.end_headers()
+            
+            # Stream MPEG-TS data (blocks until client disconnects)
+            mpegts_stream.stream_mpegts(cam_id, username, password, self.wfile)
+            return
+        
+        # Handle cleanup endpoint
+        if self.path == '/cleanup_mpegts':
+            mpegts_stream.cleanup_all_mpegts()
+            self.send_response(200)
+            self.send_header('Content-Type', 'text/plain')
+            self.end_headers()
+            self.wfile.write(b'MPEG-TS streams cleaned up')
+            return
+        
         # Handle camera video proxy for /video*
         if self.path.startswith('/video'):
             self.proxy_camera_stream()
@@ -206,18 +248,8 @@ class CORSProxyHandler(http.server.SimpleHTTPRequestHandler):
             camera_ip_prefix = os.environ.get('CAMERA_IP_PREFIX', '10.10.0')
             ip = f"{camera_ip_prefix}.{cam_id}"
             
-            # Choose URI based on format
-            # Most IP cameras support multiple streams:
-            # - /video1s3.mjpg - MJPEG stream
-            # - /video1s1 or /h264 - H.264 stream (varies by camera model)
-            if format_type == 'h264':
-                # Try common H.264 endpoints for IP cameras
-                # Adjust based on your camera model
-                uri = "/video1s1"  # Common for Honeywell/Hikvision
-                # Alternative: uri = "/Streaming/Channels/101" for some models
-            else:
-                uri = "/video1s3.mjpg"  # MJPEG
-            
+            # Use HTTP MJPEG stream for all cameras
+            uri = "/video1s3.mjpg"  # MJPEG
             url = f"https://{ip}{uri}"
             
             logger.debug(f"camera{cam_id}: Proxying {format_type} stream from {ip}")
@@ -268,14 +300,7 @@ class CORSProxyHandler(http.server.SimpleHTTPRequestHandler):
                 stream = urllib.request.urlopen(req2, context=context, timeout=10)
                 pass  # Successfully connected, no need to log
                 self.send_response(200)
-                
-                # Set appropriate content type based on format
-                if format_type == 'h264':
-                    # For raw H.264, use video/H264 or application/octet-stream
-                    self.send_header("Content-Type", "video/H264")
-                else:
-                    self.send_header("Content-Type", stream.headers.get("Content-Type", "multipart/x-mixed-replace"))
-                
+                self.send_header("Content-Type", stream.headers.get("Content-Type", "multipart/x-mixed-replace"))
                 self.end_headers()
 
                 while True:

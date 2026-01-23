@@ -1,0 +1,13 @@
+mpegts.js
+Version: 1.7.3
+Source: https://cdn.jsdelivr.net/npm/mpegts.js@1.7.3/dist/
+Downloaded: 2026-01-22
+License: Apache-2.0
+GitHub: https://github.com/xqq/mpegts.js
+
+Files:
+- mpegts.js (217,829 bytes) - Development version with source maps
+- mpegts.min.js (218,101 bytes) - Production minified version
+
+Note: Use mpegts.js for development (better debugging)
+      Use mpegts.min.js for production (optimized)

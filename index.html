@@ -1,4 +1,9 @@
 <html>
+<head>
+<!-- mpegts.js - MPEG-TS streaming library (local copy, v1.7.3) -->
+<script src="lib/mpegts.js"></script>
+</head>
+<body>
 <style>
 html, body {
     height: 100vh;
@@ -25,13 +30,13 @@ body {
         grid-template-rows: repeat(4, 25vh);
     }
 }
-img {
+img, video {
     width: 100%;
     height: 100%;
     object-fit: cover;
     transition: opacity 0.5s ease;
 }
-img.active{grid-column:span 2;grid-row:span 2}
+img.active, video.active{grid-column:span 2;grid-row:span 2}
 .event-wrapper {
     position: relative;
     width: 100%;

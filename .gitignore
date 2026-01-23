@@ -7,16 +7,16 @@ __pycache__/
 *.so
 *.egg
 *.egg-info/
+dist/
+build/
+
+# Note: lib/ folder is NOT ignored - it contains vendored JS libraries that should be committed
 
 # Test files
 test.html
 test.js
-test_*.py
 test_*.js
 test_*.html
-
-# Reference/documentation files (not used in main code)
-camera_endpoints.json
 
 # Environment
 .env
@@ -35,3 +35,8 @@ Thumbs.db
 
 # Logs
 *.log
+
+# Temporary files
+*.tmp
+*.bak
+*.backup
